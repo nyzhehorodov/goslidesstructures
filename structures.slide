@@ -1,0 +1,237 @@
+Internal definitions of Go types
+(slice, map, string, interface, channel)
+
+Vitalii Nyzhehorodov
+
+*  Agenda
+
+- Slice
+- Map
+- String
+- interface
+- Channel
+
+
+
+* Slice
+*Introduction*
+
+The slice type is an abstraction built on top of Go's array type.
+A slice is a descriptor of an array segment. It consists of a pointer to the array, the length of the segment, and its capacity (the maximum length of the segment).
+
+.image slice_internals.png
+
+
+* Slice
+
+ s := make([]byte, 5)
+
+Our variable s, created earlier by make([]byte, 5), is structured like this:
+
+.image slice_internals2.png
+
+
+* Slicing
+
+ s = s[2:4]
+Slicing does not copy the slice's data. It creates a new slice value that points to the original array
+.image slice_internals3.png 
+
+
+* Slicing
+
+ s = s[:cap(s)]
+Earlier we sliced s to a length shorter than its capacity. We can grow s to its capacity by slicing it again:
+.image slice_internals4.png
+A slice cannot be grown beyond its capacity. Attempting to do so will cause a runtime panic
+
+
+* Slicing example 
+
+.play main.slice.slicing.go
+
+
+* Slice growth
+
+.play main.slice.grow.go
+
+
+* Passing to func
+
+.play main.slice.func.go
+.link https://play.golang.org/p/6fJuig1qZ0D
+
+
+* Links:
+
+.link https://blog.golang.org/slices-intro
+
+
+* Map
+*Introduction*
+
+One of the most useful data structures in computer science is the hash table. Many hash table implementations exist with varying properties, but in general they offer fast lookups, adds, and deletes. Go provides a built-in map type that implements a hash table.
+
+
+* Map internals
+ 
+The hash table for a Go map is structured as an array of buckets. The number of buckets is always equal to a power of 2. When a map operation is performed, such as (colors["Black"] = "#000000"), a hash key is generated against the key that is specified. In this case the string "Black" is used to generate the hash key. The low order bits (LOB) of the generated hash key is used to select a bucket.
+
+.image map1.png
+
+
+* Map internals
+
+If we look inside any bucket, we will find two data structures. 
+- *First*, there is an array with the top 8 high order bits (HOB) from the same hash key that was used to select the bucket. 
+- *Second*, there is an array of bytes that store the key/value pairs. The byte array packs all the keys and then all the values together for the respective bucket.
+.image map2.png
+
+
+* Map 
+*Bucket* *Overflow*
+
+A bucket is configured to store only 8 key/value pairs. If a ninth key needs to be added to a bucket that is full, an overflow bucket is created and reference from inside the respective bucket.
+
+.image map3.png
+
+
+* Map
+*Growth*
+
+Growing the hash table starts with assigning a pointer called the "old bucket" pointer to the current bucket array. Then a new bucket array is allocated to hold twice the number of existing buckets
+
+.image map4.png
+
+Evacuations happen as key/value pairs are added or removed from the map. 
+
+
+* Links:
+
+.link https://blog.golang.org/maps
+.link https://www.ardanlabs.com/blog/2013/12/macro-view-of-map-internals-in-go.html
+.link https://habr.com/ru/post/457728/
+.link https://en.wikipedia.org/wiki/Hash_table
+
+
+* String
+*Introduction*
+
+In Go, a string is in effect a read-only slice of bytes.
+
+It’s important to state right up front that a string holds arbitrary bytes. It is not required to hold Unicode text, UTF-8 text, or any other predefined format. As far as the content of a string is concerned, it is exactly equivalent to a slice of bytes.
+
+
+* String
+*Iterating*
+
+.play main.string.range.go
+
+
+* Links
+.link https://go.dev/blog/strings
+
+
+* Interface
+*Introduction*
+
+Interfaces in Go provide a way to specify the behavior of an object: if something can do _this_, then it can be used _here_.
+
+
+* Interface
+
+Passing parameters to function
+
+.link https://play.golang.org/p/dKU_heHTHcy
+.link https://play.golang.org/p/jIkpqKTknB5
+
+
+* Interface internals
+
+ type iface struct { // 16 bytes on a 64bit arch
+    tab  *itab
+    data unsafe.Pointer
+ }
+
+An interface is thus a very simple structure that maintains 2 pointers:
+
+-    tab holds the address of an itab object, which embeds the datastructures that describe both the type of the interface as well as the type of the data it points to.
+-    data is a raw (i.e. unsafe) pointer to the value held by the interface.
+
+.image interface.jpg
+
+
+* Links
+
+.link https://golangbyexample.com/inner-working-interface-golang/
+.link https://github.com/teh-cmc/go-internals/blob/master/chapter2_interfaces/README.md#anatomy-of-an-interface
+
+
+* Channel
+Channels are the pipes that connect concurrent goroutines. You can send values into channels from one goroutine and receive those values into another goroutine.
+
+*Types:*
+
+- buffered:
+
+ make(chan int, 1)
+
+- unbuffered:
+
+ make(chan int)
+
+
+* Example
+
+ term := make(chan os.Signal, 1)
+ signal.Notify(term, os.Interrupt, syscall.SIGTERM)
+ 
+ select {
+ case sig := <-term:
+ 	log.Infof("Received OS Signal %s, exiting gracefully...", sig)
+ ...
+
+
+* Direction
+
+When using channels as function parameters, you can specify if a channel is meant to only send or receive values. This specificity increases the type-safety of the program.
+
+ func ping(pings chan<- string, msg string) {
+    pings <- msg
+ }
+ 
+ func pong(pings <-chan string, pongs chan<- string) {
+    msg := <-pings
+    pongs <- msg
+ }
+
+ func main() {
+    pings := make(chan string, 1)
+    pongs := make(chan string, 1)
+    ping(pings, "passed message")
+    pong(pings, pongs)
+    fmt.Println(<-pongs)
+ }
+
+
+* Structure
+
+.image chan.png
+
+
+* Structure
+
+- *dataqsize* Is the size of the buffer mentioned above, that is make(chan T, N), the N.
+- *elemsize* Is the size of a channel corresponding to a single element.
+- *buf* is the circular queue where our data is actually stored. (used only for buffered channel)
+- *closed* Indicates whether the current channel is in the closed state. After a channel is created, this field is set to 0, that is, the channel is open; by calling close to set it to 1, the channel is closed.
+- *sendx* and recvx is state field of a ring buffer, which indicates the current index of buffer — backing array from where it can send data and receive data.
+- *recvq* and *sendq* waiting queues, which are used to store the blocked goroutines while trying to read data on the channel or while trying to send data from the channel.
+- *lock* To lock the channel for each read and write operation as sending and receiving must be mutually exclusive operations.
+
+
+* Links 
+
+.link https://codeburst.io/diving-deep-into-the-golang-channels-549fd4ed21a8
+.link https://gobyexample.com/channel-directions
+
